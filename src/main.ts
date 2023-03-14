@@ -50,7 +50,7 @@ async function run(organization: string, githubRepo?: string): Promise<void> {
 
     console.log(repoNames)
 
-    console.log('Starting migration...')
+    console.log(`Starting backup for ${repoNames.length} repositories...`)
 
     // Start the migration on GitHub
     const migration = await octokit.request('POST /orgs/{org}/migrations', {
@@ -77,7 +77,7 @@ async function run(organization: string, githubRepo?: string): Promise<void> {
         )
         console.log(`State is ${check.data.state}... \n`)
         state = check.data.state
-        await sleep(5000)
+        await sleep(30000)
     }
 
     console.log(

@@ -6205,6 +6205,7 @@ var https = __toESM(require("https"));
 
 // src/main.ts
 var githubOrganization = process.env.GH_ORG;
+var githubRepo = process.env.GH_REPO;
 var octokit = new import_core2.Octokit({
   auth: process.env.GH_APIKEY
 });
@@ -6216,24 +6217,28 @@ function check(githubOrganization2) {
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-async function run(organization) {
-  console.log("Get list of repositories...");
+async function run(organization, githubRepo2) {
   let repoNames = [];
-  let fetchMore = true;
-  let page = 1;
-  while (fetchMore) {
-    const repos = await octokit.request("GET /orgs/{org}/repos", {
-      org: organization,
-      type: "all",
-      per_page: 100,
-      sort: "full_name",
-      page: page++
-    });
-    repoNames = repoNames.concat(repos.data.map((item) => item.full_name));
-    fetchMore = repos.data.length >= 100;
+  if (githubRepo2 && githubRepo2 !== "") {
+    repoNames = [githubRepo2];
+  } else {
+    console.log("Get list of repositories...");
+    let fetchMore = true;
+    let page = 1;
+    while (fetchMore) {
+      const repos = await octokit.request("GET /orgs/{org}/repos", {
+        org: organization,
+        type: "all",
+        per_page: 100,
+        sort: "full_name",
+        page: page++
+      });
+      repoNames = repoNames.concat(repos.data.map((item) => item.full_name));
+      fetchMore = repos.data.length >= 100;
+    }
   }
   console.log(repoNames);
-  console.log("Starting migration...");
+  console.log(`Starting backup for ${repoNames.length} repositories...`);
   const migration = await octokit.request("POST /orgs/{org}/migrations", {
     org: organization,
     repositories: repoNames,
@@ -6255,7 +6260,7 @@ The current migration id is ${migration.data.id} and the state is currently on $
     console.log(`State is ${check2.data.state}... 
 `);
     state = check2.data.state;
-    await sleep(5e3);
+    await sleep(3e4);
   }
   console.log(
     `State changed to ${state}! 
@@ -6300,7 +6305,7 @@ Requesting download url of archive...
   downloadArchive(archive.url, filename);
 }
 check(githubOrganization);
-run(githubOrganization);
+run(githubOrganization, githubRepo);
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   check
