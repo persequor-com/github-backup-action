@@ -1,4 +1,4 @@
-import {setOutput} from '@actions/core';
+import {setOutput} from '@actions/core'
 import {Octokit} from '@octokit/core'
 import * as fs from 'fs'
 import * as https from 'https'
@@ -6,14 +6,13 @@ import 'dotenv/config'
 
 // All the GitHub variables
 const githubOrganization: string = process.env.GH_ORG as string
+const githubRepo: string = process.env.GH_REPO as string
 const octokit = new Octokit({
     auth: process.env.GH_APIKEY
 })
 
 // Check if all the variables necessary are defined
-export function check(
-    githubOrganization: string
-): void {
+export function check(githubOrganization: string): void {
     if (!githubOrganization) {
         throw new Error('GH_ORG is undefined')
     }
@@ -25,23 +24,28 @@ async function sleep(ms: number): Promise<void> {
 }
 
 // Main function for running the migration
-async function run(organization: string): Promise<void> {
-    console.log('Get list of repositories...')
-
+async function run(organization: string, githubRepo?: string): Promise<void> {
     let repoNames: string[] = []
-    let fetchMore = true
-    let page = 1
 
-    while (fetchMore) {
-        const repos = await octokit.request('GET /orgs/{org}/repos', {
-            org: organization,
-            type: 'all',
-            per_page: 10,
-            sort: 'full_name',
-            page: page++
-        })
-        repoNames = repoNames.concat(repos.data.map(item => item.full_name))
-        fetchMore = repos.data.length >= 100
+    if (githubRepo && githubRepo !== '') {
+        repoNames = [githubRepo]
+    } else {
+        console.log('Get list of repositories...')
+
+        let fetchMore = true
+        let page = 1
+
+        while (fetchMore) {
+            const repos = await octokit.request('GET /orgs/{org}/repos', {
+                org: organization,
+                type: 'all',
+                per_page: 100,
+                sort: 'full_name',
+                page: page++
+            })
+            repoNames = repoNames.concat(repos.data.map(item => item.full_name))
+            fetchMore = repos.data.length >= 100
+        }
     }
 
     console.log(repoNames)
@@ -142,4 +146,4 @@ async function run(organization: string): Promise<void> {
 check(githubOrganization)
 
 // Start the backup script
-run(githubOrganization)
+run(githubOrganization, githubRepo)

@@ -144,59 +144,6 @@ var require_command = __commonJS({
   }
 });
 
-// node_modules/@actions/core/lib/file-command.js
-var require_file_command = __commonJS({
-  "node_modules/@actions/core/lib/file-command.js"(exports) {
-    "use strict";
-    var __createBinding = exports && exports.__createBinding || (Object.create ? function(o, m, k, k2) {
-      if (k2 === void 0)
-        k2 = k;
-      Object.defineProperty(o, k2, { enumerable: true, get: function() {
-        return m[k];
-      } });
-    } : function(o, m, k, k2) {
-      if (k2 === void 0)
-        k2 = k;
-      o[k2] = m[k];
-    });
-    var __setModuleDefault = exports && exports.__setModuleDefault || (Object.create ? function(o, v) {
-      Object.defineProperty(o, "default", { enumerable: true, value: v });
-    } : function(o, v) {
-      o["default"] = v;
-    });
-    var __importStar = exports && exports.__importStar || function(mod) {
-      if (mod && mod.__esModule)
-        return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k in mod)
-          if (k !== "default" && Object.hasOwnProperty.call(mod, k))
-            __createBinding(result, mod, k);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-    Object.defineProperty(exports, "__esModule", { value: true });
-    exports.issueCommand = void 0;
-    var fs2 = __importStar(require("fs"));
-    var os = __importStar(require("os"));
-    var utils_1 = require_utils();
-    function issueCommand(command, message) {
-      const filePath = process.env[`GITHUB_${command}`];
-      if (!filePath) {
-        throw new Error(`Unable to find environment variable for file command ${command}`);
-      }
-      if (!fs2.existsSync(filePath)) {
-        throw new Error(`Missing file at path: ${filePath}`);
-      }
-      fs2.appendFileSync(filePath, `${utils_1.toCommandValue(message)}${os.EOL}`, {
-        encoding: "utf8"
-      });
-    }
-    exports.issueCommand = issueCommand;
-  }
-});
-
 // node_modules/uuid/dist/rng.js
 var require_rng = __commonJS({
   "node_modules/uuid/dist/rng.js"(exports) {
@@ -685,6 +632,72 @@ var require_dist = __commonJS({
     function _interopRequireDefault(obj) {
       return obj && obj.__esModule ? obj : { default: obj };
     }
+  }
+});
+
+// node_modules/@actions/core/lib/file-command.js
+var require_file_command = __commonJS({
+  "node_modules/@actions/core/lib/file-command.js"(exports) {
+    "use strict";
+    var __createBinding = exports && exports.__createBinding || (Object.create ? function(o, m, k, k2) {
+      if (k2 === void 0)
+        k2 = k;
+      Object.defineProperty(o, k2, { enumerable: true, get: function() {
+        return m[k];
+      } });
+    } : function(o, m, k, k2) {
+      if (k2 === void 0)
+        k2 = k;
+      o[k2] = m[k];
+    });
+    var __setModuleDefault = exports && exports.__setModuleDefault || (Object.create ? function(o, v) {
+      Object.defineProperty(o, "default", { enumerable: true, value: v });
+    } : function(o, v) {
+      o["default"] = v;
+    });
+    var __importStar = exports && exports.__importStar || function(mod) {
+      if (mod && mod.__esModule)
+        return mod;
+      var result = {};
+      if (mod != null) {
+        for (var k in mod)
+          if (k !== "default" && Object.hasOwnProperty.call(mod, k))
+            __createBinding(result, mod, k);
+      }
+      __setModuleDefault(result, mod);
+      return result;
+    };
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.prepareKeyValueMessage = exports.issueFileCommand = void 0;
+    var fs2 = __importStar(require("fs"));
+    var os = __importStar(require("os"));
+    var uuid_1 = require_dist();
+    var utils_1 = require_utils();
+    function issueFileCommand(command, message) {
+      const filePath = process.env[`GITHUB_${command}`];
+      if (!filePath) {
+        throw new Error(`Unable to find environment variable for file command ${command}`);
+      }
+      if (!fs2.existsSync(filePath)) {
+        throw new Error(`Missing file at path: ${filePath}`);
+      }
+      fs2.appendFileSync(filePath, `${utils_1.toCommandValue(message)}${os.EOL}`, {
+        encoding: "utf8"
+      });
+    }
+    exports.issueFileCommand = issueFileCommand;
+    function prepareKeyValueMessage(key, value) {
+      const delimiter = `ghadelimiter_${uuid_1.v4()}`;
+      const convertedValue = utils_1.toCommandValue(value);
+      if (key.includes(delimiter)) {
+        throw new Error(`Unexpected input: name should not contain the delimiter "${delimiter}"`);
+      }
+      if (convertedValue.includes(delimiter)) {
+        throw new Error(`Unexpected input: value should not contain the delimiter "${delimiter}"`);
+      }
+      return `${key}<<${delimiter}${os.EOL}${convertedValue}${os.EOL}${delimiter}`;
+    }
+    exports.prepareKeyValueMessage = prepareKeyValueMessage;
   }
 });
 
@@ -2009,7 +2022,6 @@ var require_core = __commonJS({
     var utils_1 = require_utils();
     var os = __importStar(require("os"));
     var path = __importStar(require("path"));
-    var uuid_1 = require_dist();
     var oidc_utils_1 = require_oidc_utils();
     var ExitCode;
     (function(ExitCode2) {
@@ -2021,18 +2033,9 @@ var require_core = __commonJS({
       process.env[name] = convertedVal;
       const filePath = process.env["GITHUB_ENV"] || "";
       if (filePath) {
-        const delimiter = `ghadelimiter_${uuid_1.v4()}`;
-        if (name.includes(delimiter)) {
-          throw new Error(`Unexpected input: name should not contain the delimiter "${delimiter}"`);
-        }
-        if (convertedVal.includes(delimiter)) {
-          throw new Error(`Unexpected input: value should not contain the delimiter "${delimiter}"`);
-        }
-        const commandValue = `${name}<<${delimiter}${os.EOL}${convertedVal}${os.EOL}${delimiter}`;
-        file_command_1.issueCommand("ENV", commandValue);
-      } else {
-        command_1.issueCommand("set-env", { name }, convertedVal);
+        return file_command_1.issueFileCommand("ENV", file_command_1.prepareKeyValueMessage(name, val));
       }
+      command_1.issueCommand("set-env", { name }, convertedVal);
     }
     exports.exportVariable = exportVariable;
     function setSecret(secret) {
@@ -2042,7 +2045,7 @@ var require_core = __commonJS({
     function addPath(inputPath) {
       const filePath = process.env["GITHUB_PATH"] || "";
       if (filePath) {
-        file_command_1.issueCommand("PATH", inputPath);
+        file_command_1.issueFileCommand("PATH", inputPath);
       } else {
         command_1.issueCommand("add-path", {}, inputPath);
       }
@@ -2062,7 +2065,10 @@ var require_core = __commonJS({
     exports.getInput = getInput;
     function getMultilineInput(name, options) {
       const inputs = getInput(name, options).split("\n").filter((x) => x !== "");
-      return inputs;
+      if (options && options.trimWhitespace === false) {
+        return inputs;
+      }
+      return inputs.map((input) => input.trim());
     }
     exports.getMultilineInput = getMultilineInput;
     function getBooleanInput(name, options) {
@@ -2078,8 +2084,12 @@ Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
     }
     exports.getBooleanInput = getBooleanInput;
     function setOutput2(name, value) {
+      const filePath = process.env["GITHUB_OUTPUT"] || "";
+      if (filePath) {
+        return file_command_1.issueFileCommand("OUTPUT", file_command_1.prepareKeyValueMessage(name, value));
+      }
       process.stdout.write(os.EOL);
-      command_1.issueCommand("set-output", { name }, value);
+      command_1.issueCommand("set-output", { name }, utils_1.toCommandValue(value));
     }
     exports.setOutput = setOutput2;
     function setCommandEcho(enabled) {
@@ -2137,7 +2147,11 @@ Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
     }
     exports.group = group;
     function saveState(name, value) {
-      command_1.issueCommand("save-state", { name }, value);
+      const filePath = process.env["GITHUB_STATE"] || "";
+      if (filePath) {
+        return file_command_1.issueFileCommand("STATE", file_command_1.prepareKeyValueMessage(name, value));
+      }
+      command_1.issueCommand("save-state", { name }, utils_1.toCommandValue(value));
     }
     exports.saveState = saveState;
     function getState(name) {
@@ -5956,7 +5970,7 @@ var require_dist_node8 = __commonJS({
     var request = require_dist_node5();
     var graphql = require_dist_node6();
     var authToken = require_dist_node7();
-    var VERSION = "4.0.5";
+    var VERSION = "4.2.0";
     var Octokit2 = class {
       constructor(options = {}) {
         const hook = new beforeAfterHook.Collection();
@@ -6211,7 +6225,7 @@ async function run(organization) {
     const repos = await octokit.request("GET /orgs/{org}/repos", {
       org: organization,
       type: "all",
-      per_page: 10,
+      per_page: 100,
       sort: "full_name",
       page: page++
     });

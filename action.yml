@@ -5,6 +5,8 @@ inputs:
     GH_ORG:
         description: 'The GitHub org you want to make a backup for'
         required: true
+    GH_REPO:
+        description: A single repository to backup, instead of all repositories in the organisation
     GH_APIKEY:
         description: 'The API token necessary to talk to the GitHub API'
         required: true
