@@ -53,7 +53,6 @@ jobs:
       uses: skrepr/github-backup-action@1.0.0
       env:
         GH_ORG: 'your-org-here'
-        GH_REPO: 'your-repo-here'
         GH_APIKEY: ${{ secrets.GH_PAT }} # You can't use GITHUB_TOKEN to use the API
         AWS_BUCKET_NAME: 'your-bucket-here'
         AWS_BUCKET_REGION: 'eu-west-1'
