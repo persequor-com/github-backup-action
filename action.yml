@@ -2,17 +2,19 @@ name: 'Github Migrations Backup'
 author: 'oscar-b'
 description: 'Backup a Github Org with one Action'
 inputs:
-    GH_ORG:
+    githubOrganization:
         description: 'The GitHub org you want to make a backup for'
         required: true
-    GH_REPO:
+    githubRepository:
         description: A single repository to backup, instead of all repositories in the organisation
-    GH_APIKEY:
+    apiKey:
         description: 'The API token necessary to talk to the GitHub API'
         required: true
 outputs:
-    backupFile:
-        description: The file with all the backups
+    backupFiles:
+        description: The files with all the backups
+    backupDirectory:
+        description: The directory with all the backups
 runs:
     using: 'node16'
     main: 'dist/index.js'

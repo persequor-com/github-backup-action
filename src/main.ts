@@ -1,149 +1,166 @@
-import {setOutput} from '@actions/core'
-import {Octokit} from '@octokit/core'
-import * as fs from 'fs'
-import * as https from 'https'
-import 'dotenv/config'
+import { debug, error, getInput, info, setOutput } from '@actions/core';
+import { getOctokit } from '@actions/github';
+import { HttpClient } from '@actions/http-client';
+import * as fs from 'fs';
+import 'dotenv/config';
 
 // All the GitHub variables
-const githubOrganization: string = process.env.GH_ORG as string
-const githubRepo: string = process.env.GH_REPO as string
-const octokit = new Octokit({
-    auth: process.env.GH_APIKEY
-})
-
-// Check if all the variables necessary are defined
-export function check(githubOrganization: string): void {
-    if (!githubOrganization) {
-        throw new Error('GH_ORG is undefined')
-    }
-}
+const apiKey = getInput('apiKey');
+const githubOrganization = getInput('githubOrganization');
+const githubRepository = getInput('githubRepository');
+const octokit = getOctokit(apiKey);
 
 // Add sleep function to reduce calls to GitHub API when checking the status of the migration
 async function sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms))
+	return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // Main function for running the migration
-async function run(organization: string, githubRepo?: string): Promise<void> {
-    let repoNames: string[] = []
+async function run(
+	organization: string,
+	githubRepository?: string
+): Promise<void> {
+	const reposPerRun = 50;
+	let repoNames: Array<string[]> = [];
 
-    if (githubRepo && githubRepo !== '') {
-        repoNames = [githubRepo]
-    } else {
-        console.log('Get list of repositories...')
+	if (githubRepository && githubRepository !== '') {
+		repoNames.push([githubRepository]);
+	} else {
+		info('Get list of repositories...');
 
-        let fetchMore = true
-        let page = 1
+		let fetchMore = true;
+		let page = 1;
 
-        while (fetchMore) {
-            const repos = await octokit.request('GET /orgs/{org}/repos', {
-                org: organization,
-                type: 'all',
-                per_page: 100,
-                sort: 'full_name',
-                page: page++
-            })
-            repoNames = repoNames.concat(repos.data.map(item => item.full_name))
-            fetchMore = repos.data.length >= 100
-        }
-    }
+		while (fetchMore) {
+			const repos = await octokit.rest.repos.listForOrg({
+				org: organization,
+				type: 'all',
+				per_page: reposPerRun,
+				sort: 'full_name',
+				page: page++
+			});
+			repoNames.push(repos.data.map(item => item.full_name));
 
-    console.log(repoNames)
+			fetchMore = repos.data.length >= reposPerRun;
+		}
+	}
 
-    console.log(`Starting backup for ${repoNames.length} repositories...`)
+	debug(JSON.stringify(repoNames, null, 2));
 
-    // Start the migration on GitHub
-    const migration = await octokit.request('POST /orgs/{org}/migrations', {
-        org: organization,
-        repositories: repoNames,
-        lock_repositories: false
-    })
+	// Create directory for backups
+	const directory = `github_${githubOrganization}_${new Date()
+		.toJSON()
+		.replaceAll(':', '-')}`;
+	fs.mkdirSync(directory);
+	debug(`Created directory "${directory}" for this backup run`);
 
-    console.log(
-        `Migration started successfully! \nThe current migration id is ${migration.data.id} and the state is currently on ${migration.data.state}`
-    )
+	// Start backup processes (split with reposPerRun in each)
+	const backups = repoNames.map((repositories, index) =>
+		backup(organization, repositories, directory, index)
+	);
 
-    // Need a migration status when entering the while loop for the first time
-    let state = migration.data.state
+	// Wait for all backup runs to finish
+	const results = await Promise.allSettled(backups);
 
-    // Wait for status of migration to be exported
-    while (state !== 'exported') {
-        const check = await octokit.request(
-            'GET /orgs/{org}/migrations/{migration_id}',
-            {
-                org: organization,
-                migration_id: migration.data.id
-            }
-        )
-        console.log(`State is ${check.data.state}... \n`)
-        state = check.data.state
-        await sleep(30000)
-    }
+	const backupFiles: string[] = [];
 
-    console.log(
-        `State changed to ${state}! \nRequesting download url of archive...\n`
-    )
+	for (const result of results) {
+		if (result.status === 'fulfilled') {
+			backupFiles.push(result.value);
+		} else {
+			error('Backup failed');
+		}
+	}
 
-    // Fetches the URL to a migration archive
-    const archive = await octokit.request(
-        'GET /orgs/{org}/migrations/{migration_id}/archive',
-        {
-            org: organization,
-            migration_id: migration.data.id
-        }
-    )
+	info('All backups completed!');
 
-    console.log(archive.url)
-
-    // Function for deleting archive from Github
-    async function deleteArchive(
-        organization: string,
-        migrationId: number
-    ): Promise<void> {
-        console.log('Deleting organization migration archive from GitHub')
-        await octokit.request(
-            'DELETE /orgs/{org}/migrations/{migration_id}/archive',
-            {
-                org: organization,
-                migration_id: migrationId
-            }
-        )
-    }
-
-    // Function for downloading archive from Github S3 environment
-    function downloadArchive(url: string, filename: string): void {
-        https.get(url, res => {
-            const writeStream = fs.createWriteStream(filename)
-            console.log('\nDownloading archive file...')
-            res.pipe(writeStream)
-
-            writeStream.on('finish', () => {
-                console.log('Download completed!')
-
-                setOutput('backupFile', filename)
-
-                // Deletes the migration archive. Migration archives are otherwise automatically deleted after seven days.
-                deleteArchive(organization, migration.data.id)
-                console.log('Backup completed! Goodbye.')
-            })
-
-            writeStream.on('error', () => {
-                console.log('Error while downloading file')
-            })
-        })
-    }
-
-    // Create a name for the file which has the current date attached to it
-    const filename = `gh_org_archive_${githubOrganization}_${new Date()
-        .toJSON()
-        .slice(0, 10)}.tar.gz`
-
-    // Download archive from Github and upload it to our own S3 bucket
-    downloadArchive(archive.url, filename)
+	setOutput('backupFiles', backupFiles);
+	setOutput('backupDirectory', directory);
 }
 
-// Check if all variables are defined
-check(githubOrganization)
+async function backup(
+	org: string,
+	repositories: string[],
+	directory: string,
+	index: number
+): Promise<string> {
+	const http = new HttpClient();
+
+	info(
+		`#${index} - Starting backup for ${repositories.length} repositories...`
+	);
+	debug(
+		`#${index} - Repositories: ${JSON.stringify(repositories, null, 2)}}`
+	);
+
+	// Start the migration on GitHub
+	const migration = await octokit.rest.migrations.startForOrg({
+		org,
+		repositories,
+		lock_repositories: false
+	});
+
+	let { id: migration_id, state } = migration.data;
+
+	info(
+		`#${index} - Started successfully, migration id is ${migration_id} and the state is currently ${state}`
+	);
+
+	// Wait for status of migration to be exported
+	while (state !== 'exported') {
+		await sleep(30000);
+
+		const check = await octokit.rest.migrations.getStatusForOrg({
+			org,
+			migration_id
+		});
+
+		state = check.data.state;
+		info(`#${index} - State is ${state}...`);
+	}
+
+	info(
+		`#${index} - State changed to ${state}, requesting download url of archive...`
+	);
+
+	// Fetches the URL to a migration archive
+	const archive = await octokit.rest.migrations.downloadArchiveForOrg({
+		org,
+		migration_id
+	});
+
+	debug(archive.url);
+
+	const filename = `${directory}/github_${githubOrganization}_${index}_${new Date().toJSON()}.tar.gz`;
+	info(`#${index} - Downloading archive file to ${filename}...`);
+	const writeStream = fs.createWriteStream(filename);
+	const response = await http.get(archive.url);
+	response.message.pipe(writeStream);
+
+	async function write() {
+		return new Promise((resolve, reject) => {
+			writeStream.on('close', async () => {
+				info(`#${index} - Download completed!`);
+				resolve('complete');
+			});
+			writeStream.on('error', () => {
+				error(`#${index} - Error while downloading file`);
+				reject();
+			});
+		});
+	}
+
+	await write();
+
+	// Deletes the migration archive. Migration archives are otherwise automatically deleted after seven days.
+	info(`#${index} - Deleting organization migration archive from GitHub`);
+	await octokit.rest.migrations.deleteArchiveForOrg({
+		org,
+		migration_id
+	});
+
+	return filename;
+}
 
 // Start the backup script
-run(githubOrganization, githubRepo)
+run(githubOrganization, githubRepository);
