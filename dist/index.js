@@ -664,7 +664,7 @@ var require_file_command = __commonJS({
     };
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.prepareKeyValueMessage = exports.issueFileCommand = void 0;
-    var fs2 = __importStar(require("fs"));
+    var fs = __importStar(require("fs"));
     var os = __importStar(require("os"));
     var uuid_1 = require_dist();
     var utils_1 = require_utils();
@@ -673,10 +673,10 @@ var require_file_command = __commonJS({
       if (!filePath) {
         throw new Error(`Unable to find environment variable for file command ${command}`);
       }
-      if (!fs2.existsSync(filePath)) {
+      if (!fs.existsSync(filePath)) {
         throw new Error(`Missing file at path: ${filePath}`);
       }
-      fs2.appendFileSync(filePath, `${utils_1.toCommandValue(message)}${os.EOL}`, {
+      fs.appendFileSync(filePath, `${utils_1.toCommandValue(message)}${os.EOL}`, {
         encoding: "utf8"
       });
     }
@@ -2099,11 +2099,11 @@ Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
       command_1.issue("echo", enabled ? "on" : "off");
     }
     exports.setCommandEcho = setCommandEcho;
-    function setFailed(message) {
+    function setFailed2(message) {
       process.exitCode = ExitCode.Failure;
       error2(message);
     }
-    exports.setFailed = setFailed;
+    exports.setFailed = setFailed2;
     function isDebug() {
       return process.env["RUNNER_DEBUG"] === "1";
     }
@@ -7548,7 +7548,7 @@ var require_github = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports, module2) {
-    var fs2 = require("fs");
+    var fs = require("fs");
     var path = require("path");
     var os = require("os");
     var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
@@ -7591,7 +7591,7 @@ var require_main = __commonJS({
         }
       }
       try {
-        const parsed = DotenvModule.parse(fs2.readFileSync(dotenvPath, { encoding }));
+        const parsed = DotenvModule.parse(fs.readFileSync(dotenvPath, { encoding }));
         Object.keys(parsed).forEach(function(key) {
           if (!Object.prototype.hasOwnProperty.call(process.env, key)) {
             process.env[key] = parsed[key];
@@ -7666,7 +7666,7 @@ var require_cli_options = __commonJS({
 var import_core = __toESM(require_core());
 var import_github = __toESM(require_github());
 var import_http_client = __toESM(require_lib());
-var fs = __toESM(require("fs"));
+var import_fs = require("fs");
 
 // node_modules/dotenv/config.js
 (function() {
@@ -7683,88 +7683,104 @@ var fs = __toESM(require("fs"));
 var apiKey = (0, import_core.getInput)("apiKey");
 var githubOrganization = (0, import_core.getInput)("githubOrganization");
 var githubRepository = (0, import_core.getInput)("githubRepository");
+var repositoriesPerJob = (0, import_core.getInput)("repositoriesPerJob");
 var octokit = (0, import_github.getOctokit)(apiKey);
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-async function run(organization, githubRepository2) {
-  const reposPerRun = 50;
+async function run(org, githubRepository2) {
   let repoNames = [];
+  const backupFiles = [];
+  let failures = 0;
   if (githubRepository2 && githubRepository2 !== "") {
     repoNames.push([githubRepository2]);
   } else {
-    (0, import_core.info)("Get list of repositories...");
-    let fetchMore = true;
-    let page = 1;
-    while (fetchMore) {
-      const repos = await octokit.rest.repos.listForOrg({
-        org: organization,
-        type: "all",
-        per_page: reposPerRun,
-        sort: "full_name",
-        page: page++
-      });
-      repoNames.push(repos.data.map((item) => item.full_name));
-      fetchMore = repos.data.length >= reposPerRun;
-    }
+    repoNames = await getOrganisationRepositories(
+      org,
+      parseInt(repositoriesPerJob)
+    );
   }
-  (0, import_core.debug)(JSON.stringify(repoNames, null, 2));
   const directory = `github_${githubOrganization}_${new Date().toJSON().replaceAll(":", "-")}`;
-  fs.mkdirSync(directory);
+  (0, import_fs.mkdirSync)(directory);
   (0, import_core.debug)(`Created directory "${directory}" for this backup run`);
   const backups = repoNames.map(
-    (repositories, index) => backup(organization, repositories, directory, index)
+    (repositories, index) => backup(org, repositories, directory, index)
   );
   const results = await Promise.allSettled(backups);
-  const backupFiles = [];
   for (const result of results) {
     if (result.status === "fulfilled") {
       backupFiles.push(result.value);
     } else {
-      (0, import_core.error)("Backup failed");
+      failures++;
+      (0, import_core.error)(`Backup failed: ${result.reason}`);
     }
   }
-  (0, import_core.info)("All backups completed!");
   (0, import_core.setOutput)("backupFiles", backupFiles);
   (0, import_core.setOutput)("backupDirectory", directory);
+  if (failures > 0) {
+    (0, import_core.setFailed)(`${failures} backup jobs failed!`);
+  } else {
+    (0, import_core.info)("All backups completed!");
+  }
+}
+async function getOrganisationRepositories(org, per_page) {
+  let repoNames = [];
+  (0, import_core.info)("Get list of repositories...");
+  let fetchMore = true;
+  let page = 1;
+  while (fetchMore) {
+    const repos = await octokit.rest.repos.listForOrg({
+      org,
+      type: "all",
+      per_page,
+      sort: "full_name",
+      page: page++
+    });
+    if (repos.data.length > 0) {
+      repoNames.push(repos.data.map((item) => item.full_name));
+    }
+    fetchMore = repos.data.length >= per_page;
+  }
+  (0, import_core.debug)(JSON.stringify(repoNames, null, 2));
+  return repoNames;
 }
 async function backup(org, repositories, directory, index) {
   const http = new import_http_client.HttpClient();
+  const filename = `${directory}/github_${githubOrganization}_${index}_${new Date().toJSON()}.tar.gz`;
+  let state = "";
   (0, import_core.info)(
     `#${index} - Starting backup for ${repositories.length} repositories...`
   );
   (0, import_core.debug)(
     `#${index} - Repositories: ${JSON.stringify(repositories, null, 2)}}`
   );
-  const migration = await octokit.rest.migrations.startForOrg({
+  const {
+    data: { id: migration_id }
+  } = await octokit.rest.migrations.startForOrg({
     org,
     repositories,
     lock_repositories: false
   });
-  let { id: migration_id, state } = migration.data;
-  (0, import_core.info)(
-    `#${index} - Started successfully, migration id is ${migration_id} and the state is currently ${state}`
-  );
-  while (state !== "exported") {
+  (0, import_core.info)(`#${index} - Started successfully, migration id is ${migration_id}`);
+  do {
     await sleep(3e4);
-    const check = await octokit.rest.migrations.getStatusForOrg({
+    const status = await octokit.rest.migrations.getStatusForOrg({
       org,
       migration_id
     });
-    state = check.data.state;
-    (0, import_core.info)(`#${index} - State is ${state}...`);
-  }
+    state = status.data.state;
+    (0, import_core.debug)(`#${index} - State is ${state}...`);
+  } while (state !== "exported");
   (0, import_core.info)(
-    `#${index} - State changed to ${state}, requesting download url of archive...`
+    `#${index} - Backup is ${state}, requesting download url of archive...`
   );
   const archive = await octokit.rest.migrations.downloadArchiveForOrg({
     org,
     migration_id
   });
   (0, import_core.debug)(archive.url);
-  const filename = `${directory}/github_${githubOrganization}_${index}_${new Date().toJSON()}.tar.gz`;
   (0, import_core.info)(`#${index} - Downloading archive file to ${filename}...`);
-  const writeStream = fs.createWriteStream(filename);
+  const writeStream = (0, import_fs.createWriteStream)(filename);
   const response = await http.get(archive.url);
   response.message.pipe(writeStream);
   async function write() {
@@ -7774,8 +7790,7 @@ async function backup(org, repositories, directory, index) {
         resolve("complete");
       });
       writeStream.on("error", () => {
-        (0, import_core.error)(`#${index} - Error while downloading file`);
-        reject();
+        reject(`#${index} - Error while downloading file`);
       });
     });
   }
@@ -7785,6 +7800,7 @@ async function backup(org, repositories, directory, index) {
     org,
     migration_id
   });
+  (0, import_core.info)(`#${index} - \u2705 Backup job done!`);
   return filename;
 }
 run(githubOrganization, githubRepository);

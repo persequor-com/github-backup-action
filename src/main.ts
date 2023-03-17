@@ -1,13 +1,23 @@
-import { debug, error, getInput, info, setOutput } from '@actions/core';
+import {
+	debug,
+	error,
+	getInput,
+	info,
+	setFailed,
+	setOutput
+} from '@actions/core';
 import { getOctokit } from '@actions/github';
 import { HttpClient } from '@actions/http-client';
-import * as fs from 'fs';
+import { createWriteStream, mkdirSync } from 'fs';
 import 'dotenv/config';
 
 // All the GitHub variables
 const apiKey = getInput('apiKey');
 const githubOrganization = getInput('githubOrganization');
 const githubRepository = getInput('githubRepository');
+const repositoriesPerJob = getInput('repositoriesPerJob');
+
+// Initialise `octokit` with a custom privileged API key
 const octokit = getOctokit(apiKey);
 
 // Add sleep function to reduce calls to GitHub API when checking the status of the migration
@@ -16,66 +26,85 @@ async function sleep(ms: number): Promise<void> {
 }
 
 // Main function for running the migration
-async function run(
-	organization: string,
-	githubRepository?: string
-): Promise<void> {
-	const reposPerRun = 50;
-	let repoNames: Array<string[]> = [];
+async function run(org: string, githubRepository?: string): Promise<void> {
+	let repoNames: string[][] = [];
+	const backupFiles: string[] = [];
+	let failures = 0;
 
 	if (githubRepository && githubRepository !== '') {
 		repoNames.push([githubRepository]);
 	} else {
-		info('Get list of repositories...');
-
-		let fetchMore = true;
-		let page = 1;
-
-		while (fetchMore) {
-			const repos = await octokit.rest.repos.listForOrg({
-				org: organization,
-				type: 'all',
-				per_page: reposPerRun,
-				sort: 'full_name',
-				page: page++
-			});
-			repoNames.push(repos.data.map(item => item.full_name));
-
-			fetchMore = repos.data.length >= reposPerRun;
-		}
+		repoNames = await getOrganisationRepositories(
+			org,
+			parseInt(repositoriesPerJob)
+		);
 	}
-
-	debug(JSON.stringify(repoNames, null, 2));
 
 	// Create directory for backups
 	const directory = `github_${githubOrganization}_${new Date()
 		.toJSON()
 		.replaceAll(':', '-')}`;
-	fs.mkdirSync(directory);
+	mkdirSync(directory);
 	debug(`Created directory "${directory}" for this backup run`);
 
 	// Start backup processes (split with reposPerRun in each)
 	const backups = repoNames.map((repositories, index) =>
-		backup(organization, repositories, directory, index)
+		backup(org, repositories, directory, index)
 	);
 
 	// Wait for all backup runs to finish
 	const results = await Promise.allSettled(backups);
 
-	const backupFiles: string[] = [];
-
 	for (const result of results) {
 		if (result.status === 'fulfilled') {
 			backupFiles.push(result.value);
 		} else {
-			error('Backup failed');
+			failures++;
+			error(`Backup failed: ${result.reason}`);
 		}
 	}
 
-	info('All backups completed!');
-
 	setOutput('backupFiles', backupFiles);
 	setOutput('backupDirectory', directory);
+
+	if (failures > 0) {
+		setFailed(`${failures} backup jobs failed!`);
+	} else {
+		info('All backups completed!');
+	}
+}
+
+async function getOrganisationRepositories(
+	org: string,
+	per_page: number
+): Promise<string[][]> {
+	let repoNames: string[][] = [];
+
+	info('Get list of repositories...');
+
+	let fetchMore = true;
+	let page = 1;
+
+	while (fetchMore) {
+		const repos = await octokit.rest.repos.listForOrg({
+			org,
+			type: 'all',
+			per_page,
+			sort: 'full_name',
+			page: page++
+		});
+
+		// At least one repo in the response
+		if (repos.data.length > 0) {
+			repoNames.push(repos.data.map(item => item.full_name));
+		}
+
+		fetchMore = repos.data.length >= per_page;
+	}
+
+	debug(JSON.stringify(repoNames, null, 2));
+
+	return repoNames;
 }
 
 async function backup(
@@ -85,6 +114,8 @@ async function backup(
 	index: number
 ): Promise<string> {
 	const http = new HttpClient();
+	const filename = `${directory}/github_${githubOrganization}_${index}_${new Date().toJSON()}.tar.gz`;
+	let state = '';
 
 	info(
 		`#${index} - Starting backup for ${repositories.length} repositories...`
@@ -94,33 +125,32 @@ async function backup(
 	);
 
 	// Start the migration on GitHub
-	const migration = await octokit.rest.migrations.startForOrg({
+	const {
+		data: { id: migration_id }
+	} = await octokit.rest.migrations.startForOrg({
 		org,
 		repositories,
 		lock_repositories: false
 	});
 
-	let { id: migration_id, state } = migration.data;
-
-	info(
-		`#${index} - Started successfully, migration id is ${migration_id} and the state is currently ${state}`
-	);
+	info(`#${index} - Started successfully, migration id is ${migration_id}`);
 
 	// Wait for status of migration to be exported
-	while (state !== 'exported') {
+	do {
 		await sleep(30000);
 
-		const check = await octokit.rest.migrations.getStatusForOrg({
+		const status = await octokit.rest.migrations.getStatusForOrg({
 			org,
 			migration_id
 		});
 
-		state = check.data.state;
-		info(`#${index} - State is ${state}...`);
-	}
+		state = status.data.state;
+
+		debug(`#${index} - State is ${state}...`);
+	} while (state !== 'exported');
 
 	info(
-		`#${index} - State changed to ${state}, requesting download url of archive...`
+		`#${index} - Backup is ${state}, requesting download url of archive...`
 	);
 
 	// Fetches the URL to a migration archive
@@ -131,9 +161,8 @@ async function backup(
 
 	debug(archive.url);
 
-	const filename = `${directory}/github_${githubOrganization}_${index}_${new Date().toJSON()}.tar.gz`;
 	info(`#${index} - Downloading archive file to ${filename}...`);
-	const writeStream = fs.createWriteStream(filename);
+	const writeStream = createWriteStream(filename);
 	const response = await http.get(archive.url);
 	response.message.pipe(writeStream);
 
@@ -144,8 +173,7 @@ async function backup(
 				resolve('complete');
 			});
 			writeStream.on('error', () => {
-				error(`#${index} - Error while downloading file`);
-				reject();
+				reject(`#${index} - Error while downloading file`);
 			});
 		});
 	}
@@ -158,6 +186,8 @@ async function backup(
 		org,
 		migration_id
 	});
+
+	info(`#${index} - ✅ Backup job done!`);
 
 	return filename;
 }

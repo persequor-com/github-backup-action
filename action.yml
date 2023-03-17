@@ -10,6 +10,10 @@ inputs:
     apiKey:
         description: 'The API token necessary to talk to the GitHub API'
         required: true
+    repositoriesPerJob:
+        description: Number of repositories to backup in each job
+        required: true
+        default: '50'
 outputs:
     backupFiles:
         description: The files with all the backups
