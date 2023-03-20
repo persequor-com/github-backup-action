@@ -7681,9 +7681,9 @@ var import_fs = require("fs");
 
 // src/main.ts
 var apiKey = (0, import_core.getInput)("apiKey");
-var githubOrganization = (0, import_core.getInput)("githubOrganization");
+var githubOrganization = (0, import_core.getInput)("githubOrganization", { required: true });
 var githubRepository = (0, import_core.getInput)("githubRepository");
-var repositoriesPerJob = (0, import_core.getInput)("repositoriesPerJob");
+var repositoriesPerJob = (0, import_core.getInput)("repositoriesPerJob", { required: true });
 var octokit = (0, import_github.getOctokit)(apiKey);
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

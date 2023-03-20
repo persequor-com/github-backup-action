@@ -13,9 +13,9 @@ import 'dotenv/config';
 
 // All the GitHub variables
 const apiKey = getInput('apiKey');
-const githubOrganization = getInput('githubOrganization');
+const githubOrganization = getInput('githubOrganization', { required: true });
 const githubRepository = getInput('githubRepository');
-const repositoriesPerJob = getInput('repositoriesPerJob');
+const repositoriesPerJob = getInput('repositoriesPerJob', { required: true });
 
 // Initialise `octokit` with a custom privileged API key
 const octokit = getOctokit(apiKey);
