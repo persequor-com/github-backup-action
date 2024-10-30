@@ -9,7 +9,11 @@ import {
 import { getOctokit } from '@actions/github';
 import { HttpClient } from '@actions/http-client';
 import { createWriteStream, mkdirSync } from 'fs';
+import { promisify } from 'util';
 import 'dotenv/config';
+import stream from 'stream';
+
+const pipeline = promisify(stream.pipeline);
 
 // All the GitHub variables
 const apiKey = getInput('apiKey');
@@ -162,23 +166,8 @@ async function backup(
 	debug(archive.url);
 
 	info(`#${index} - Downloading archive file to ${filename}...`);
-	const writeStream = createWriteStream(filename);
-	const response = await http.get(archive.url);
-	response.message.pipe(writeStream);
 
-	async function write() {
-		return new Promise((resolve, reject) => {
-			writeStream.on('close', async () => {
-				info(`#${index} - Download completed!`);
-				resolve('complete');
-			});
-			writeStream.on('error', () => {
-				reject(`#${index} - Error while downloading file`);
-			});
-		});
-	}
-
-	await write();
+	await downloadFile(archive.url, filename, index);
 
 	// Deletes the migration archive. Migration archives are otherwise automatically deleted after seven days.
 	info(`#${index} - Deleting organization migration archive from GitHub`);
@@ -190,6 +179,55 @@ async function backup(
 	info(`#${index} - ✅ Backup job done!`);
 
 	return filename;
+}
+
+async function downloadFile(
+	url: string,
+	filename: string,
+	index: number,
+	retries: number = 3
+): Promise<string> {
+	const client = new HttpClient();
+
+	for (let attempt = 0; attempt <= retries; attempt++) {
+		try {
+			const response = await client.get(url);
+
+			// Check for successful response status
+			if (response.message.statusCode !== 200) {
+				throw new Error(
+					`#${index} - Failed to download file: HTTP ${response.message.statusCode}`
+				);
+			}
+
+			// Stream response to file
+			const writeStream = createWriteStream(filename);
+			await pipeline(response.message, writeStream);
+
+			console.info(`#${index} - Download completed!`);
+			return 'complete';
+		} catch (error: any) {
+			// Retry logic for socket hang-up errors
+			if (error.code === 'ECONNRESET' && attempt < retries) {
+				console.warn(
+					`#${index} - Socket hang up, retrying... (${
+						attempt + 1
+					}/${retries})`
+				);
+				await new Promise(resolve =>
+					setTimeout(resolve, 1000 * attempt)
+				); // Exponential backoff
+			} else {
+				throw new Error(
+					`#${index} - Failed after ${attempt + 1} attempts: ${
+						error.message
+					}`
+				);
+			}
+		}
+	}
+
+	throw new Error(`#${index} - Exceeded maximum retries`);
 }
 
 // Start the backup script
